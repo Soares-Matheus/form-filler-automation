@@ -4,7 +4,7 @@ This module owns every interaction with spreadsheet files:
 
 - Reading input (``.xlsx`` / ``.csv``) into a pandas ``DataFrame``.
 - Validating that the spreadsheet matches the expected schema.
-- Exporting the run results back to a spreadsheet (added in a later stage).
+- Exporting the run results back to a spreadsheet.
 
 Keeping all file I/O concentrated in one module isolates the rest of
 the codebase from file-format details, makes the rules around dtype
@@ -24,6 +24,9 @@ Defined at module level as a single source of truth. Adding a new
 format (e.g., ``.ods``) only requires touching this constant and the
 dispatch inside :func:`load_spreadsheet`.
 """
+
+OUTPUT_EXTENSION: str = ".xlsx"
+"""File extension that :func:`export_results` writes."""
 
 
 def load_spreadsheet(path: str | Path) -> pd.DataFrame:
@@ -133,3 +136,44 @@ def validate_columns(df: pd.DataFrame, expected: list[str]) -> None:
             f"Required columns missing from spreadsheet: {missing}. "
             f"Present columns: {sorted(present)}."
         )
+
+
+def export_results(df: pd.DataFrame, path: str | Path) -> Path:
+    """Write a results DataFrame to disk as an ``.xlsx`` file.
+
+    The function is intentionally agnostic of the DataFrame's exact
+    shape -- it writes whatever it is given. In normal use ``df`` is
+    the input spreadsheet augmented with ``status`` and ``error``
+    columns by the :class:`FormFiller`, but no such requirement is
+    enforced here. That keeps the writer reusable.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame to write.
+    path : str | Path
+        Destination file path. Must end in :data:`OUTPUT_EXTENSION`.
+        Parent directories are created on demand.
+
+    Returns
+    -------
+    pathlib.Path
+        The absolute path of the written file -- useful for logging.
+
+    Raises
+    ------
+    ValueError
+        If the destination extension is not :data:`OUTPUT_EXTENSION`.
+    """
+    path = Path(path)
+
+    if path.suffix.lower() != OUTPUT_EXTENSION:
+        raise ValueError(
+            f"export_results expects a '{OUTPUT_EXTENSION}' destination, "
+            f"got '{path.suffix}'."
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_excel(path, index=False)
+
+    return path.resolve()

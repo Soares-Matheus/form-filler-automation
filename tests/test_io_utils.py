@@ -19,6 +19,7 @@ import pytest
 
 from automation_core.io_utils import (
     SUPPORTED_EXTENSIONS,
+    export_results,
     load_spreadsheet,
     validate_columns,
 )
@@ -134,3 +135,57 @@ def test_supported_extensions_contract() -> None:
     """The public extension contract must keep ``.xlsx`` and ``.csv``."""
     assert ".xlsx" in SUPPORTED_EXTENSIONS
     assert ".csv" in SUPPORTED_EXTENSIONS
+
+
+# ---------------------------------------------------------------------------
+# export_results
+# ---------------------------------------------------------------------------
+
+
+def test_export_results_writes_xlsx_file(tmp_path: Path, valid_dataframe: pd.DataFrame) -> None:
+    """The destination file is created on disk."""
+    destination = tmp_path / "results.xlsx"
+
+    written = export_results(valid_dataframe, destination)
+
+    assert destination.exists()
+    assert written == destination.resolve()
+
+
+def test_export_results_creates_parent_dirs(tmp_path: Path, valid_dataframe: pd.DataFrame) -> None:
+    """Missing parent directories are created automatically."""
+    destination = tmp_path / "nested" / "dir" / "results.xlsx"
+
+    export_results(valid_dataframe, destination)
+
+    assert destination.exists()
+
+
+def test_export_results_round_trip_preserves_data(
+    tmp_path: Path, valid_dataframe: pd.DataFrame
+) -> None:
+    """Writing then reading back returns the same logical data."""
+    destination = tmp_path / "round_trip.xlsx"
+    augmented = valid_dataframe.copy()
+    augmented["status"] = ["success", "error"]
+    augmented["error"] = ["", "timeout while clicking submit"]
+
+    export_results(augmented, destination)
+    reloaded = load_spreadsheet(destination)
+
+    # Same columns, same number of rows, same status column.
+    assert list(reloaded.columns) == list(augmented.columns)
+    assert len(reloaded) == len(augmented)
+    assert reloaded["status"].tolist() == ["success", "error"]
+
+
+def test_export_results_raises_for_non_xlsx_extension(
+    tmp_path: Path, valid_dataframe: pd.DataFrame
+) -> None:
+    """A non-xlsx destination raises ValueError mentioning the offender."""
+    destination = tmp_path / "results.csv"
+
+    with pytest.raises(ValueError) as exc_info:
+        export_results(valid_dataframe, destination)
+
+    assert ".csv" in str(exc_info.value)
