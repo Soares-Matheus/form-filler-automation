@@ -302,4 +302,4 @@ Possible follow-ups, in priority order:
 
 **Matheus Henrique Soares** — Python developer specialising in
 RPA, scraping and browser automation.
-[LinkedIn](https://www.linkedin.com/) · [GitHub](https://github.com/)
+[LinkedIn](https://www.linkedin.com/in/matheus-henrique-soares-/) · [GitHub](https://github.com/Soares-Matheus)
