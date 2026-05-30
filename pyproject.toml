@@ -1,0 +1,34 @@
+# ----------------------------------------------------------------------------
+# Project metadata + tool configuration.
+#
+# A single pyproject.toml replaces the patchwork of setup.cfg + pytest.ini +
+# requirements.txt that older Python projects used. It is the modern standard
+# defined by PEP 518/621 and is the file every IDE and CI looks for first.
+# ----------------------------------------------------------------------------
+
+[project]
+name = "form-filler-automation"
+version = "0.1.0"
+description = "Spreadsheet-driven Selenium bot that fills any web form via YAML configuration."
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Matheus Henrique Soares" }]
+
+# ----------------------------------------------------------------------------
+# pytest configuration
+# ----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+# Where pytest should look for tests.
+testpaths = ["tests"]
+
+# Sets the project root as the import root, so `from automation_core...`
+# works without sys.path tricks.
+pythonpath = ["."]
+
+# Redirect pytest's temporary directory into the project folder.
+# Default location is %TEMP%/pytest-of-<user>, which on this machine
+# is blocked by PermissionError (likely antivirus or stale ACLs).
+# Keeping tmp inside the project keeps tests self-contained and
+# avoids any OS-level permission surprises.
+addopts = "-ra --strict-markers --strict-config --basetemp=.pytest_basetemp"

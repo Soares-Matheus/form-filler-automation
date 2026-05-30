@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Project-specific runtime artifacts
+logs/*.log
+output/screenshots/*.png
+output/results.xlsx
+
+# Keep the empty directories tracked
+!logs/.gitkeep
+!output/.gitkeep
+!output/screenshots/.gitkeep
+!assets/.gitkeep
+
+# Pytest / coverage
+.pytest_cache/
+.pytest_basetemp/
+.coverage
+htmlcov/
+
+# Spec PDF (lives in project root; not for distribution)
+*.pdf

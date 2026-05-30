@@ -1,0 +1,59 @@
+# =============================================================================
+# Form Filler Automation — declarative configuration
+# =============================================================================
+# This file is the bot's brain. It controls WHERE the bot operates
+# (target URL, selectors) and HOW it behaves (timeouts, retries).
+#
+# To target a DIFFERENT form, edit this file only — no Python code changes.
+# That is the core value proposition of this project: form-agnostic automation.
+# =============================================================================
+
+target:
+  url: "https://demoqa.com/automation-practice-form"
+  submit_selector: "#submit"
+  confirmation_selector: ".modal-content"   # element that confirms submission
+
+behavior:
+  headless: false       # Set to true for unattended runs / CI
+  timeout: 10           # WebDriverWait default, in seconds
+  retries: 2            # Per-row retry budget before marking as error
+  delay:
+    min: 0.5            # Random jitter between actions (anti-detection)
+    max: 1.5
+
+# -----------------------------------------------------------------------------
+# Field mapping
+# -----------------------------------------------------------------------------
+# Each key MUST match a column name in the input spreadsheet.
+# Each value declares HOW to fill that field on the page:
+#   - type:     one of [text, dropdown, radio, checkbox, date]
+#   - selector: CSS selector (or template — refined per type in Stage 2)
+# -----------------------------------------------------------------------------
+fields:
+  first_name:
+    type: text
+    selector: "#firstName"
+
+  last_name:
+    type: text
+    selector: "#lastName"
+
+  email:
+    type: text
+    selector: "#userEmail"
+
+  gender:
+    type: radio
+    # DemoQA hides the <input> behind a <label>. Final dynamic selector
+    # (e.g., label[for='gender-radio-1']) will be resolved in Stage 2.
+    selector: "label[for^='gender-radio']"
+
+  mobile:
+    type: text
+    selector: "#userNumber"
+
+  state:
+    type: dropdown
+    # React-Select widget — not a native <select>.
+    # The dropdown handler will click to open, then click the option by text.
+    selector: "#state"
