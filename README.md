@@ -192,6 +192,37 @@ form-filler-automation/
 
 ---
 
+## Screenshots
+
+### Console output during a live run
+
+The bot streams progress on the terminal with `rich`, one line per
+field per row, plus a final summary.
+
+<p align="center">
+  <img src="assets/terminal_result.png" alt="Terminal output" width="640">
+</p>
+
+### Results spreadsheet (`output/results.xlsx`)
+
+The original input is augmented with `status` and `error` columns,
+giving the stakeholder a per-row audit trail.
+
+<p align="center">
+  <img src="assets/xlsx_result.png" alt="Results spreadsheet" width="720">
+</p>
+
+### Confirmation screenshot (one per submission)
+
+Every successful submission is captured as a PNG so the user has
+visual proof of every form that went through.
+
+<p align="center">
+  <img src="assets/screenshot_example.png" alt="Confirmation screenshot" width="720">
+</p>
+
+---
+
 ## How it works
 
 The pipeline is built as four clean layers, each unaware of the layers

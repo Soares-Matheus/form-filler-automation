@@ -6,18 +6,46 @@ anti-detection options every modern automation project needs:
 - Removes the "Chrome is being controlled by automated software" banner.
 - Hides the ``navigator.webdriver`` flag that JavaScript code uses to detect bots.
 - Forces a human-sized window so the page never renders in a tiny viewport.
-- Silences the chromedriver's stderr to keep the console output clean.
+- Silences both the chromedriver and Chrome stderr to keep the console clean.
 
 Selenium 4.6+ ships with Selenium Manager, which auto-downloads the
 matching ChromeDriver on first use -- no manual binary management.
 """
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+from contextlib import contextmanager
+from typing import Iterator
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+
+
+@contextmanager
+def _silence_stderr() -> Iterator[None]:
+    """Temporarily redirect file descriptor 2 (stderr) to the null device.
+
+    Chrome inherits the Python process' stderr and uses it to print
+    the ``DevTools listening on ws://127.0.0.1:...`` banner at startup.
+    Selenium's :class:`Service` ``log_output`` only catches the
+    *chromedriver* process; Chrome itself bypasses it. To silence the
+    banner for good, we redirect at the OS-level file descriptor while
+    the driver is being constructed, then restore stderr afterwards so
+    the rest of the program's logging is unaffected.
+    """
+    sys.stderr.flush()
+    saved_stderr_fd = os.dup(2)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        os.dup2(saved_stderr_fd, 2)
+        os.close(saved_stderr_fd)
+        os.close(devnull_fd)
 
 
 def build_driver(
@@ -56,7 +84,8 @@ def build_driver(
     width, height = window_size
     options.add_argument(f"--window-size={width},{height}")
 
-    # Quiet down noisy Chrome log output on the console.
+    # Quiet down Chrome's own log verbosity. This DOES NOT cover the
+    # "DevTools listening on..." banner (see _silence_stderr below).
     options.add_argument("--log-level=3")
 
     if headless:
@@ -64,13 +93,15 @@ def build_driver(
         # browser than the legacy --headless flag.
         options.add_argument("--headless=new")
 
-    # Silence the chromedriver process itself. Without this, the
-    # terminal shows "DevTools listening on ws://127.0.0.1:..." -- a
-    # harmless localhost address, but visually noisy on demo recordings.
+    # Silence the chromedriver process' own logs. Necessary but not
+    # sufficient -- Chrome itself still prints to stderr.
     service = Service(log_output=subprocess.DEVNULL)
 
     # Selenium 4.6+ ships with Selenium Manager, which auto-downloads
     # the right ChromeDriver for the installed Chrome. No extra setup.
-    driver = webdriver.Chrome(service=service, options=options)
+    # The stderr redirect catches the DevTools banner that Chrome emits
+    # *during* driver construction, then restores stderr immediately.
+    with _silence_stderr():
+        driver = webdriver.Chrome(service=service, options=options)
 
     return driver
