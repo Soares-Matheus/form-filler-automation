@@ -2,19 +2,13 @@
 
 This module owns the :class:`FormFiller` class (the "conductor" that
 glues every piece in ``automation_core/`` together) and the
-command-line entry point :func:`main`. Running
-
-::
-
-    python form_filler.py --input data/sample_input.xlsx
-
-reads ``config.yaml``, runs the pipeline against the configured form,
-and writes ``output/results.xlsx`` plus per-row screenshots.
+command-line entry point :func:`main`.
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -34,36 +28,21 @@ from automation_core.logging_setup import configure_logger
 from automation_core.waits import wait_and_click, wait_for_element
 
 
-# ---------------------------------------------------------------------------
-# Default paths (relative to the project root)
-# ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = ROOT / "config.yaml"
 DEFAULT_OUTPUT_DIR = ROOT / "output"
 DEFAULT_LOG_PATH = ROOT / "logs" / "run.log"
 
-
-# ---------------------------------------------------------------------------
-# FormFiller class
-# ---------------------------------------------------------------------------
+# Backoff base (seconds). Attempt N waits BACKOFF_BASE * 2**N before retrying:
+# attempt 0 fails -> wait 0.5s, attempt 1 fails -> wait 1s, etc.
+BACKOFF_BASE: float = 0.5
 
 
 class FormFiller:
     """Run a spreadsheet-driven form filling pipeline.
 
-    Parameters
-    ----------
-    config : dict
-        Parsed ``config.yaml``. Must contain ``target`` and ``fields``
-        sections; ``behavior`` is optional.
-    input_path : str | Path
-        Path to the input spreadsheet (.xlsx or .csv).
-    output_dir : str | Path
-        Directory where ``results.xlsx`` and the ``screenshots/`` sub-
-        directory are written. Created on demand.
-    log_path : str | Path | None, default None
-        Optional path to the persistent log file. If given, every log
-        record is duplicated to disk in addition to the rich console.
+    See :func:`main` for the CLI; instantiate this class directly for
+    programmatic use.
     """
 
     def __init__(
@@ -88,15 +67,25 @@ class FormFiller:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, limit: int | None = None) -> pd.DataFrame:
-        """Execute the full pipeline and return the results DataFrame."""
+    def run(self, limit: int | None = None, dry_run: bool = False) -> pd.DataFrame:
+        """Execute the full pipeline and return the results DataFrame.
+
+        Parameters
+        ----------
+        limit : int | None, default None
+            If given, process only the first ``limit`` rows.
+        dry_run : bool, default False
+            If True, fill every field but skip the submit click. Useful
+            for validating against a real system without creating records.
+        """
         df = load_spreadsheet(self.input_path)
         validate_columns(df, list(self.field_specs.keys()))
 
         if limit is not None:
             df = df.head(limit)
 
-        self.logger.info(f"Starting run over {len(df)} row(s)")
+        mode = "dry-run" if dry_run else "live"
+        self.logger.info(f"Starting {mode} run over {len(df)} row(s)")
 
         driver = build_driver(headless=self.behavior.get("headless", False))
         statuses: list[str] = []
@@ -104,7 +93,9 @@ class FormFiller:
 
         try:
             for index, row in df.iterrows():
-                status, error = self._process_row(driver, int(index), row.to_dict())
+                status, error = self._process_row(
+                    driver, int(index), row.to_dict(), dry_run=dry_run
+                )
                 statuses.append(status)
                 errors.append(error)
         finally:
@@ -133,35 +124,73 @@ class FormFiller:
         driver: WebDriver,
         index: int,
         row: dict,
+        dry_run: bool = False,
     ) -> tuple[str, str]:
-        """Fill, submit and capture one row. Failures are isolated."""
-        try:
-            self.logger.info(f"Row {index}: navigating to form")
-            driver.get(self.target["url"])
+        """Fill, submit (unless ``dry_run``), capture -- with retries.
 
-            for column_name, field_spec in self.field_specs.items():
-                value = row[column_name]
-                self.logger.info(
-                    f"Row {index}: filling {column_name} "
-                    f"({field_spec['type']}) = {value!r}"
-                )
-                fill_field(
-                    driver,
-                    field_spec["type"],
-                    field_spec["selector"],
-                    value,
-                )
+        ``config.behavior.retries`` controls how many extra attempts a
+        failing row gets. Exponential backoff (0.5s, 1s, 2s, 4s, ...)
+        spaces them out so transient page hiccups have time to settle.
+        """
+        retries = int(self.behavior.get("retries", 0))
+        last_exception: Exception | None = None
 
-            self._submit_and_capture(driver, index)
-            self.logger.info(f"Row {index}: success")
-            return "success", ""
-        except Exception as exc:  # noqa: BLE001 -- isolation by design
-            self.logger.error(f"Row {index} failed: {exc!r}")
+        for attempt in range(retries + 1):
             try:
-                self._capture_screenshot(driver, index, suffix="ERROR")
-            except Exception:  # noqa: BLE001
-                self.logger.warning(f"Row {index}: failed to capture error screenshot")
-            return "error", str(exc)
+                self._fill_and_submit(driver, index, row, dry_run=dry_run)
+                self.logger.info(f"Row {index}: success")
+                return "success", ""
+            except Exception as exc:  # noqa: BLE001 -- isolation by design
+                last_exception = exc
+                is_last_attempt = attempt == retries
+                if is_last_attempt:
+                    break
+                wait = BACKOFF_BASE * (2 ** attempt)
+                self.logger.warning(
+                    f"Row {index}: attempt {attempt + 1}/{retries + 1} "
+                    f"failed: {exc!r}. Retrying in {wait:.1f}s"
+                )
+                time.sleep(wait)
+
+        # Out of retries. Log, screenshot, return error.
+        self.logger.error(
+            f"Row {index} failed after {retries + 1} attempt(s): {last_exception!r}"
+        )
+        try:
+            self._capture_screenshot(driver, index, suffix="ERROR")
+        except Exception:  # noqa: BLE001
+            self.logger.warning(f"Row {index}: failed to capture error screenshot")
+        return "error", str(last_exception)
+
+    def _fill_and_submit(
+        self,
+        driver: WebDriver,
+        index: int,
+        row: dict,
+        dry_run: bool = False,
+    ) -> None:
+        """One attempt: navigate, fill every field, submit (or skip)."""
+        self.logger.info(f"Row {index}: navigating to form")
+        driver.get(self.target["url"])
+
+        for column_name, field_spec in self.field_specs.items():
+            value = row[column_name]
+            self.logger.info(
+                f"Row {index}: filling {column_name} "
+                f"({field_spec['type']}) = {value!r}"
+            )
+            fill_field(
+                driver,
+                field_spec["type"],
+                field_spec["selector"],
+                value,
+            )
+
+        if dry_run:
+            self.logger.info(f"Row {index}: dry-run -- skipping submit")
+            self._capture_screenshot(driver, index, suffix="DRYRUN")
+        else:
+            self._submit_and_capture(driver, index)
 
     def _submit_and_capture(self, driver: WebDriver, index: int) -> None:
         """Submit the form, wait for confirmation, screenshot, dismiss."""
@@ -226,14 +255,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Override config.behavior.headless. "
-             "Use --headless or --no-headless.",
+        help="Override config.behavior.headless. Use --headless or --no-headless.",
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Process only the first N rows (useful for smoke tests).",
+    )
+    parser.add_argument(
+        "--no-submit",
+        action="store_true",
+        help="Dry-run: fill every field but DO NOT click submit.",
     )
     parser.add_argument(
         "--output-dir",
@@ -258,25 +291,12 @@ def load_yaml_config(path: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point.
-
-    Parameters
-    ----------
-    argv : list[str] | None
-        Command-line arguments (excluding the program name). When
-        ``None``, ``sys.argv[1:]`` is used. Exposed for testability.
-
-    Returns
-    -------
-    int
-        Process exit code. ``0`` on success, non-zero on uncaught error.
-    """
+    """Entry point."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
     config = load_yaml_config(args.config)
 
-    # CLI flag wins over file config when given.
     if args.headless is not None:
         config.setdefault("behavior", {})["headless"] = args.headless
 
@@ -286,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         log_path=args.log_file,
     )
-    filler.run(limit=args.limit)
+    filler.run(limit=args.limit, dry_run=args.no_submit)
     return 0
 
 
