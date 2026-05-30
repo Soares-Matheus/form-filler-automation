@@ -6,14 +6,18 @@ anti-detection options every modern automation project needs:
 - Removes the "Chrome is being controlled by automated software" banner.
 - Hides the ``navigator.webdriver`` flag that JavaScript code uses to detect bots.
 - Forces a human-sized window so the page never renders in a tiny viewport.
+- Silences the chromedriver's stderr to keep the console output clean.
 
 Selenium 4.6+ ships with Selenium Manager, which auto-downloads the
 matching ChromeDriver on first use -- no manual binary management.
 """
 from __future__ import annotations
 
+import subprocess
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 
 def build_driver(
@@ -60,8 +64,13 @@ def build_driver(
         # browser than the legacy --headless flag.
         options.add_argument("--headless=new")
 
+    # Silence the chromedriver process itself. Without this, the
+    # terminal shows "DevTools listening on ws://127.0.0.1:..." -- a
+    # harmless localhost address, but visually noisy on demo recordings.
+    service = Service(log_output=subprocess.DEVNULL)
+
     # Selenium 4.6+ ships with Selenium Manager, which auto-downloads
     # the right ChromeDriver for the installed Chrome. No extra setup.
-    driver = webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(service=service, options=options)
 
     return driver
