@@ -37,6 +37,12 @@ DEFAULT_LOG_PATH = ROOT / "logs" / "run.log"
 # attempt 0 fails -> wait 0.5s, attempt 1 fails -> wait 1s, etc.
 BACKOFF_BASE: float = 0.5
 
+# DemoQA fades its confirmation modal in with a short CSS transition.
+# wait_for_element returns the moment the modal enters the DOM, which
+# is BEFORE the animation finishes -- giving us half-opaque screenshots.
+# A brief sleep after the wait keeps the captures sharp.
+MODAL_ANIMATION_DELAY: float = 0.4
+
 
 class FormFiller:
     """Run a spreadsheet-driven form filling pipeline.
@@ -205,6 +211,8 @@ class FormFiller:
         wait_and_click(driver, (By.CSS_SELECTOR, submit_selector))
         wait_for_element(driver, (By.CSS_SELECTOR, confirmation_selector))
 
+        # Let the modal's fade-in finish before capturing. See MODAL_ANIMATION_DELAY.
+        time.sleep(MODAL_ANIMATION_DELAY)
         self._capture_screenshot(driver, index)
 
         try:

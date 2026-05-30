@@ -1,0 +1,17 @@
+# Normalize line endings to LF in the repository while keeping the
+# native ending in each developer's working copy. Eliminates the
+# "LF will be replaced by CRLF" warnings on Windows clones and stops
+# noisy diffs caused by mixed endings.
+* text=auto eol=lf
+
+# Treat known binary formats as binary so git never tries to diff
+# or "normalize" them.
+*.xlsx binary
+*.xls  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.pdf  binary
+*.ico  binary
+*.zip  binary
