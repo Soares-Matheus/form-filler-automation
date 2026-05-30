@@ -59,7 +59,7 @@ proves competence in form automation.
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/<your-username>/form-filler-automation.git
+git clone https://github.com/Soares-Matheus/form-filler-automation.git
 cd form-filler-automation
 
 # 2. Create and activate a virtual environment
