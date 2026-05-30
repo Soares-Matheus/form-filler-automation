@@ -173,3 +173,91 @@ def test_run_quits_driver_even_on_exception(
         filler.run()
 
     mock_driver.quit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# CLI parser
+# ---------------------------------------------------------------------------
+
+
+from form_filler import build_parser, main  # noqa: E402
+
+
+def test_parser_requires_input_argument():
+    """--input is mandatory; parser exits when missing."""
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
+
+
+def test_parser_accepts_minimal_args(tmp_path: Path):
+    """Only --input is required; defaults fill the rest."""
+    parser = build_parser()
+    args = parser.parse_args(["--input", str(tmp_path / "in.xlsx")])
+
+    assert args.input == tmp_path / "in.xlsx"
+    assert args.headless is None  # not given => no override
+    assert args.limit is None
+
+
+def test_parser_accepts_headless_and_limit(tmp_path: Path):
+    """--headless and --limit are parsed correctly."""
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--input", str(tmp_path / "in.xlsx"), "--headless", "--limit", "5"]
+    )
+
+    assert args.headless is True
+    assert args.limit == 5
+
+
+def test_parser_no_headless_flag_sets_false(tmp_path: Path):
+    """--no-headless explicitly sets headless to False."""
+    parser = build_parser()
+    args = parser.parse_args(
+        ["--input", str(tmp_path / "in.xlsx"), "--no-headless"]
+    )
+
+    assert args.headless is False
+
+
+@patch("form_filler.FormFiller")
+@patch("form_filler.load_yaml_config")
+def test_main_passes_limit_to_run(mock_load_config, mock_filler_class, tmp_path):
+    """main() forwards --limit to FormFiller.run()."""
+    mock_load_config.return_value = {
+        "target": {"url": "x", "submit_selector": "x", "confirmation_selector": "x"},
+        "behavior": {"headless": False},
+        "fields": {},
+    }
+    instance = MagicMock()
+    mock_filler_class.return_value = instance
+
+    exit_code = main([
+        "--input", str(tmp_path / "in.xlsx"),
+        "--limit", "2",
+    ])
+
+    assert exit_code == 0
+    instance.run.assert_called_once_with(limit=2)
+
+
+@patch("form_filler.FormFiller")
+@patch("form_filler.load_yaml_config")
+def test_main_headless_flag_overrides_config(mock_load_config, mock_filler_class, tmp_path):
+    """--headless mutates the config dict before FormFiller is constructed."""
+    base_config = {
+        "target": {"url": "x", "submit_selector": "x", "confirmation_selector": "x"},
+        "behavior": {"headless": False},
+        "fields": {},
+    }
+    mock_load_config.return_value = base_config
+
+    main([
+        "--input", str(tmp_path / "in.xlsx"),
+        "--headless",
+    ])
+
+    # FormFiller was built with a config whose headless flag is now True.
+    called_config = mock_filler_class.call_args.kwargs["config"]
+    assert called_config["behavior"]["headless"] is True

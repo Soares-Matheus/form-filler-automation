@@ -1,24 +1,25 @@
-"""Form Filler Automation -- end-to-end orchestrator.
+"""Form Filler Automation -- end-to-end orchestrator + CLI.
 
-This module owns the :class:`FormFiller` class, the "conductor" that
-glues together every piece in ``automation_core/``:
+This module owns the :class:`FormFiller` class (the "conductor" that
+glues every piece in ``automation_core/`` together) and the
+command-line entry point :func:`main`. Running
 
-- Reads spreadsheet input via :mod:`automation_core.io_utils`.
-- Drives the browser via :mod:`automation_core.driver`.
-- Fills fields via :mod:`automation_core.fields`.
-- Captures screenshots and writes ``results.xlsx``.
-- Logs every step via :mod:`automation_core.logging_setup`.
+::
 
-A failure inside one row is isolated: the row is recorded as
-``status="error"`` and the loop moves on to the next, so a single
-flaky form interaction never derails an entire batch.
+    python form_filler.py --input data/sample_input.xlsx
+
+reads ``config.yaml``, runs the pipeline against the configured form,
+and writes ``output/results.xlsx`` plus per-row screenshots.
 """
 from __future__ import annotations
 
+import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import yaml
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 
@@ -31,6 +32,20 @@ from automation_core.io_utils import (
 )
 from automation_core.logging_setup import configure_logger
 from automation_core.waits import wait_and_click, wait_for_element
+
+
+# ---------------------------------------------------------------------------
+# Default paths (relative to the project root)
+# ---------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = ROOT / "config.yaml"
+DEFAULT_OUTPUT_DIR = ROOT / "output"
+DEFAULT_LOG_PATH = ROOT / "logs" / "run.log"
+
+
+# ---------------------------------------------------------------------------
+# FormFiller class
+# ---------------------------------------------------------------------------
 
 
 class FormFiller:
@@ -74,21 +89,7 @@ class FormFiller:
     # ------------------------------------------------------------------
 
     def run(self, limit: int | None = None) -> pd.DataFrame:
-        """Execute the full pipeline and return the results DataFrame.
-
-        Parameters
-        ----------
-        limit : int | None, default None
-            If given, process only the first ``limit`` rows. Useful
-            for smoke-testing changes without burning the whole batch.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The input DataFrame augmented with ``status`` (``"success"``
-            or ``"error"``) and ``error`` (empty string on success,
-            error message otherwise) columns.
-        """
+        """Execute the full pipeline and return the results DataFrame."""
         df = load_spreadsheet(self.input_path)
         validate_columns(df, list(self.field_specs.keys()))
 
@@ -133,14 +134,7 @@ class FormFiller:
         index: int,
         row: dict,
     ) -> tuple[str, str]:
-        """Fill, submit and capture one row.
-
-        Returns
-        -------
-        (status, error) : tuple[str, str]
-            ``("success", "")`` on success; ``("error", "<message>")``
-            on any exception raised during the row.
-        """
+        """Fill, submit and capture one row. Failures are isolated."""
         try:
             self.logger.info(f"Row {index}: navigating to form")
             driver.get(self.target["url"])
@@ -163,8 +157,6 @@ class FormFiller:
             return "success", ""
         except Exception as exc:  # noqa: BLE001 -- isolation by design
             self.logger.error(f"Row {index} failed: {exc!r}")
-            # Capture forensic screenshot but do NOT let it mask the
-            # original failure if the screenshot itself errors.
             try:
                 self._capture_screenshot(driver, index, suffix="ERROR")
             except Exception:  # noqa: BLE001
@@ -176,8 +168,6 @@ class FormFiller:
         submit_selector = self.target["submit_selector"]
         confirmation_selector = self.target["confirmation_selector"]
 
-        # DemoQA has banners/ads that may overlap the submit button.
-        # Scroll the button into the middle of the viewport before clicking.
         submit_element = wait_for_element(driver, (By.CSS_SELECTOR, submit_selector))
         driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});", submit_element
@@ -188,8 +178,6 @@ class FormFiller:
 
         self._capture_screenshot(driver, index)
 
-        # Dismiss the modal so the page is interactive again. The next
-        # row issues driver.get() anyway, so failure here is harmless.
         try:
             driver.find_element(By.CSS_SELECTOR, "#closeLargeModal").click()
         except Exception:  # noqa: BLE001
@@ -209,3 +197,98 @@ class FormFiller:
         path = self.screenshots_dir / filename
         driver.save_screenshot(str(path))
         return path
+
+
+# ---------------------------------------------------------------------------
+# Command-line interface
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser. Exposed for unit testing."""
+    parser = argparse.ArgumentParser(
+        prog="form_filler",
+        description="Fill a web form from a spreadsheet, driven by config.yaml.",
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Path to the input spreadsheet (.xlsx or .csv).",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help=f"Path to the YAML config (default: {DEFAULT_CONFIG_PATH.name}).",
+    )
+    parser.add_argument(
+        "--headless",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override config.behavior.headless. "
+             "Use --headless or --no-headless.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Process only the first N rows (useful for smoke tests).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Where to write results.xlsx and screenshots/ "
+             f"(default: {DEFAULT_OUTPUT_DIR.name}/).",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=DEFAULT_LOG_PATH,
+        help=f"Where to persist the log (default: "
+             f"{DEFAULT_LOG_PATH.relative_to(ROOT)}).",
+    )
+    return parser
+
+
+def load_yaml_config(path: Path) -> dict:
+    """Read a YAML file into a dict. Tiny wrapper for explicit testing."""
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point.
+
+    Parameters
+    ----------
+    argv : list[str] | None
+        Command-line arguments (excluding the program name). When
+        ``None``, ``sys.argv[1:]`` is used. Exposed for testability.
+
+    Returns
+    -------
+    int
+        Process exit code. ``0`` on success, non-zero on uncaught error.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    config = load_yaml_config(args.config)
+
+    # CLI flag wins over file config when given.
+    if args.headless is not None:
+        config.setdefault("behavior", {})["headless"] = args.headless
+
+    filler = FormFiller(
+        config=config,
+        input_path=args.input,
+        output_dir=args.output_dir,
+        log_path=args.log_file,
+    )
+    filler.run(limit=args.limit)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
