@@ -303,3 +303,14 @@ Possible follow-ups, in priority order:
 **Matheus Henrique Soares** — Python developer specialising in
 RPA, scraping and browser automation.
 [LinkedIn](https://www.linkedin.com/in/matheus-henrique-soares-/) · [GitHub](https://github.com/Soares-Matheus)
+
+---
+
+## Related project
+
+This is the **data entry** side of my Selenium portfolio. The companion
+project [selenium-amazon-scraper](https://github.com/Soares-Matheus/selenium-amazon-scraper)
+handles the opposite direction — extracting product data from Amazon
+in 10 countries with correct currency formatting per locale. Both
+projects share the same engineering style: config-driven,
+anti-detection enabled, `WebDriverWait`-based, and pytest-tested.
